@@ -1,0 +1,2 @@
+beet-thirdparty-assets
+======================
