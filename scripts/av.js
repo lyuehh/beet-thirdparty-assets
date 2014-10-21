@@ -1,6 +1,6 @@
 /*!
  * AVOSCloud JavaScript SDK
- * Version: 0.4.0
+ * Version: 0.4.4
  * Built: Mon Jun 03 2013 13:45:00
  * http://avoscloud.com
  *
@@ -13,7 +13,7 @@
  */
 (function(root) {
   root.AV = root.AV || {};
-  root.AV.VERSION = "js0.4.0";
+  root.AV.VERSION = "js0.4.4";
 }(this));
 //     Underscore.js 1.4.4
 //     http://underscorejs.org
@@ -1585,12 +1585,15 @@
         route !== "search/select" &&
         route !== "requestPasswordReset" &&
         route !== "requestEmailVerify" &&
+        route !== "requestPasswordResetBySmsCode" &&
+        route !== "resetPasswordBySmsCode" &&
         route !== "requestMobilePhoneVerify" &&
         route !== "requestLoginSmsCode" &&
         route !== "verifyMobilePhone" &&
         route !== "requestSmsCode" &&
         route !== "verifySmsCode" &&
         route !== "users" &&
+        route !== "cloudQuery" &&
         route !== "qiniu" &&
         route !== "statuses" &&
         route !== 'subscribe/statuses/count' &&
@@ -4110,7 +4113,7 @@
     } else if (typeof(File) !== "undefined" && data instanceof File) {
       this._source = readAsync(data, type);
     } else if(AV._isNode && Buffer.isBuffer(data)) {
-       this._source = AV.Promise.as(data.toString('base64'));
+       this._source = AV.Promise.as(data.toString('base64'), guessedType);
        this._metaData.size = data.length;
     } else if (_.isString(data)) {
       throw "Creating a AV.File from a String is not yet supported.";
@@ -4265,7 +4268,8 @@
                 mime_type: type,
                 metaData: self._metaData,
               };
-              self._metaData.mime_type = type;
+              if(type && self._metaData.mime_type == null)
+                self._metaData.mime_type = type;
               self._qiniu_key = key;
               self._base64 = base64;
               return AV._request("qiniu", null, null, 'POST', data);
@@ -5576,6 +5580,24 @@
   AV.Object._extend = AV._extend;
 
   /**
+   * Creates a new model with defined attributes,
+   * It's the same with
+   * <pre>
+   *   new AV.Object(attributes, options);
+   *  </pre>
+   * @param {Object} attributes The initial set of data to store in the object.
+   * @param {Object} options A set of Backbone-like options for creating the
+   *     object.  The only option currently supported is "collection".
+   * @return {AV.Object}
+   * @since v0.4.4
+   * @see AV.Object
+   * @see AV.Object.extend
+   */
+  AV.Object.new = function(attributes, options){
+    return new AV.Object(attributes, options);
+  };
+
+  /**
    * Creates a new subclass of AV.Object for the given AV class name.
    *
    * <p>Every extension of a AV class will inherit from the most recent
@@ -5639,6 +5661,9 @@
       }
       var newArguments = [className].concat(AV._.toArray(arguments));
       return AV.Object.extend.apply(NewClassObject, newArguments);
+    };
+    NewClassObject.new = function(attributes, options){
+      return new NewClassObject(attributes, options);
     };
     AV.Object._classMap[className] = NewClassObject;
     return NewClassObject;
@@ -7216,6 +7241,16 @@
      *     doesn't verify their email address.
      * @param {Object} options A Backbone-style options object.
      */
+    requestEmailVerify: function(email, options) {
+      var json = { email: email };
+      var request = AV._request("requestEmailVerify", null, null, "POST",
+                                   json);
+      return request._thenRunCallbacks(options);
+    },
+
+   /**
+    * @Deprecated typo error, please use requestEmailVerify
+    */
     requestEmailVerfiy: function(email, options) {
       var json = { email: email };
       var request = AV._request("requestEmailVerify", null, null, "POST",
@@ -7238,6 +7273,41 @@
       var json = { mobilePhoneNumber: mobilePhone };
       var request = AV._request("requestMobilePhoneVerify", null, null, "POST",
                                    json);
+      return request._thenRunCallbacks(options);
+    },
+
+
+    /**
+     * Requests a reset password sms code to be sent to the specified mobile phone
+     * number associated with the user account. This sms code allows the user to
+     * reset their account's password by calling AV.User.resetPasswordBySmsCode
+     *
+     * <p>Calls options.success or options.error on completion.</p>
+     *
+     * @param {String} mobilePhone The mobile phone number  associated with the
+     *                  user that doesn't verify their mobile phone number.
+     * @param {Object} options A Backbone-style options object.
+     */
+    requestPasswordResetBySmsCode: function(mobilePhone, options){
+      var json = { mobilePhoneNumber: mobilePhone };
+      var request = AV._request("requestPasswordResetBySmsCode", null, null, "POST",
+                                   json);
+      return request._thenRunCallbacks(options);
+    },
+
+    /**
+     * Makes a call to reset user's account password by sms code and new password.
+    * The sms code is sent by AV.User.requestPasswordResetBySmsCode.
+     * @param {String} code The sms code sent by AV.User.Cloud.requestSmsCode
+     * @param {String} password The new password.
+     * @param {Object} options A Backbone-style options object
+     * @return {AV.Promise} A promise that will be resolved with the result
+     * of the function.
+     */
+    resetPasswordBySmsCode: function(code, password, options){
+      var json = { password: password};
+      var request = AV._request("resetPasswordBySmsCode", null, code, "PUT",
+                                json);
       return request._thenRunCallbacks(options);
     },
 
@@ -7452,6 +7522,35 @@
     var query = new AV.Query(className);
     query._orQuery(queries);
     return query;
+  };
+
+  /**
+   * Retrieves a list of AVObjects that satisfy the CQL.
+   * CQL syntax please see <a href='https://cn.avoscloud.com/docs/cql_guide.html'>CQL Guide.</a>
+   * Either options.success or options.error is called when the find
+   * completes.
+   *
+   * @param {String} cql,  A CQL string, see <a href='https://cn.avoscloud.com/docs/cql_guide.html'>CQL Guide.</a>
+   * @return {AV.Promise} A promise that is resolved with the results when
+   * the query completes.
+   */
+  AV.Query.doCloudQuery = function(cql, options) {
+    var params = { cql: cql };
+    var request = AV._request("cloudQuery", null, null, 'GET', params)
+    return request.then(function(response) {
+      //query to process results.
+      var query = new AV.Query(response.className);
+      var results = _.map(response.results, function(json) {
+        var obj = query._newObject(response);
+        obj._finishFetch(query._processResult(json), true);
+          return obj;
+      });
+      return {
+        results: results,
+        count:  response.count,
+        className: response.className
+      };
+    })._thenRunCallbacks(options);
   };
 
   AV.Query._extend = AV._extend;
@@ -8983,7 +9082,7 @@
       var currUser =  AV.Object.createWithoutData('_User', AV.User.current().id)._toPointer();
       this.data.source =  this.data.source || currUser;
       data.data = this.data;
-      data.inboxType = status.inboxType || 'default';
+      data.inboxType = this.inboxType || 'default';
 
       var request = AV._request('statuses', null, null, 'POST', data);
       var self = this;
